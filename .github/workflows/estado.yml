@@ -1,0 +1,62 @@
+name: Estado en tiempo real
+
+# Una foto cada 30 minutos. GitHub retrasa o descarta muchas ejecuciones programadas, asi que
+# cada ejecucion se queda viva unas 5 horas tomando fotos; la siguiente espera en cola
+# (concurrency) y arranca al terminar la anterior. Cada foto se sube a la rama `datos` en
+# cuanto se toma.
+
+on:
+  schedule:
+    - cron: "5,35 * * * *"
+  workflow_dispatch:
+
+env:
+  FIN: "2026-11-01T00:00:00Z"   # no se toman fotos a partir de este instante
+  CADA_MIN: 30
+  DURACION_MIN: 320              # por ejecucion (el limite de un job es 360)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: estado
+  cancel-in-progress: false
+
+jobs:
+  fotos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet requests
+
+      - uses: actions/checkout@v4
+        with:
+          ref: datos
+          path: datos
+
+      - name: Fotos
+        run: |
+          git -C datos config user.name "github-actions[bot]"
+          git -C datos config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          inicio=$(date +%s)
+          fin=$(date -u -d "$FIN" +%s)
+          while [ "$(date +%s)" -lt "$fin" ]; do
+            t=$(date +%s)
+            if python estado.py --dir datos/estado; then
+              git -C datos add estado
+              git -C datos commit -q -m "Foto $(date -u '+%Y-%m-%d %H:%M') UTC"
+              for intento in 1 2 3; do
+                git -C datos push -q && break
+                git -C datos pull --rebase -q
+              done
+            fi
+            [ $(( $(date +%s) - inicio + CADA_MIN * 60 )) -gt $(( DURACION_MIN * 60 )) ] && break
+            espera=$(( CADA_MIN * 60 - ($(date +%s) - t) ))
+            [ "$espera" -gt 0 ] && sleep "$espera"
+          done
