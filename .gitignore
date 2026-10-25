@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+# fotos tomadas en local: las del workflow van a la rama datos
+estado/
