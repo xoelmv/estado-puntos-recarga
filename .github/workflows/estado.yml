@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  FIN: "2026-11-01T00:00:00Z"   # no se toman fotos a partir de este instante
+  FIN: "2026-12-01T00:00:00Z"   # no se toman fotos a partir de este instante
   CADA_MIN: 30
   DURACION_MIN: 320              # por ejecucion (el limite de un job es 360)
 
