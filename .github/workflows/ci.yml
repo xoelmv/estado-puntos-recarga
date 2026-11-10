@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  CADA_MIN: 30
+  DURACION_MIN: 330
+
+jobs:
+  check:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yml -e workflow_dispatch -L 20 --json status \
+                -q '[.[] | select(.status != "completed")] | length')
+          echo "$n"
+          if [ "$n" -eq 0 ]; then gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref main; fi
+
+  build:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    concurrency:
+      group: build
+      cancel-in-progress: false
+    steps:
+      - name: Next
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/enable" || true
+          for i in 1 2 3 4 5; do
+            gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref main && break
+            sleep 30
+          done
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet requests
+
+      - uses: actions/checkout@v4
+        with:
+          ref: datos
+          path: datos
+          filter: blob:none
+          sparse-checkout: nada
+
+      - name: Run
+        env:
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          git -C datos config user.name "github-actions[bot]"
+          git -C datos config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          p=$(( CADA_MIN * 60 ))
+          limite=$(( $(date +%s) + DURACION_MIN * 60 ))
+          while :; do
+            siguiente=$(( ( $(date +%s) / p + 1 ) * p ))
+            [ "$siguiente" -gt "$limite" ] && break
+            sleep $(( siguiente - $(date +%s) ))
+            if python run.py --dir datos/estado; then
+              git -C datos add --sparse estado
+              git -C datos commit -q -m "update"
+              for intento in 1 2 3; do
+                git -C datos push -q && break
+                git -C datos pull --rebase -q || true
+              done
+            fi
+          done
